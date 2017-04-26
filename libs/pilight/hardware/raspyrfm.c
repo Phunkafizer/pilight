@@ -10,6 +10,7 @@
 #include "../core/common.h"
 #include "../core/dso.h"
 #include "../core/log.h"
+#include "../core/irq.h"
 #include "../../wiringx/wiringX.h"
 #include "raspyrfm.h"
 
@@ -158,6 +159,11 @@ static unsigned short raspyrfmHwInit(void) {
 		if(wiringXSetup() == -1) {
 			return EXIT_FAILURE;
 		}
+		
+		if(wiringXISR(11, INT_EDGE_BOTH) < 0) {
+			logprintf(LOG_ERR, "unable to register interrupt for pin %d", 11);
+			return EXIT_SUCCESS;
+		}
 
 		if(wiringXSPISetup(rfmsettings.spi_ch, 250000) == -1) {
 			logprintf(LOG_ERR, "failed to open SPI channel: %d", rfmsettings.spi_ch);
@@ -181,6 +187,27 @@ static unsigned short raspyrfmHwInit(void) {
 			logprintf(LOG_ERR, "RaspyRfm module not found!");
 			return EXIT_FAILURE;
 		}
+		
+		//send config to raspyrfm
+		for(i=0; i<sizeof(rfmcfg) / sizeof(rfmcfg[0]); i++) {
+			writeReg(rfmcfg[i].reg, rfmcfg[i].val);
+		}
+			
+		//set frequency
+		uint32_t freqword;
+		if(rfmsettings.band == 0) {
+			freqword = FREQTOFREG(433.920); //MHz
+		}
+		else if(rfmsettings.band == 1) {
+			freqword = FREQTOFREG(868.350); //MHz
+		} 
+		
+		writeReg(REGFR, (freqword >> 16) & 0xFF);
+		writeReg(REGFR + 1, (freqword >> 8) & 0xFF);
+		writeReg(REGFR + 2, freqword & 0xFF);
+		
+		writeReg(REGDATAMODUL, 3<<5 | 1<<3); //cont. mode w/o bit synchronizer, OOK
+		writeReg(REGOPMODE, 0<<2); //receive on
 
 		return EXIT_SUCCESS;
 	} else {
@@ -270,9 +297,7 @@ static int raspyrfmSend(int *code, int rawlen, int repeats) {
 }
 
 static int raspyrfmReceive(void) {
-	//receiving not yet supported
-	sleep(1);
-	return EXIT_SUCCESS;
+	return irq_read(11);
 }
 
 #if !defined(MODULE) && !defined(_WIN32)
