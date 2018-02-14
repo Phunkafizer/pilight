@@ -255,3 +255,8 @@ if(${PROTOCOL_LIVOLO_SWITCH} MATCHES "OFF")
 	list(REMOVE_ITEM ${PROJECT_NAME}_sources "${PROJECT_SOURCE_DIR}/livolo_switch.c")
 	list(REMOVE_ITEM ${PROJECT_NAME}_headers "${PROJECT_SOURCE_DIR}/livolo_switch.h")
 endif()
+
+if(${PROTOCOL_VOLTCRAFT_SWITCH} MATCHES "OFF")
+	list(REMOVE_ITEM ${PROJECT_NAME}_sources "${PROJECT_SOURCE_DIR}/voltcraft.c")
+	list(REMOVE_ITEM ${PROJECT_NAME}_headers "${PROJECT_SOURCE_DIR}/voltcraft.h")
+endif()
