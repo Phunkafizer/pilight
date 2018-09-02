@@ -34,6 +34,7 @@
 #define MAX_PULSE_LENGTH	690
 #define AVG_PULSE_LENGTH	680
 #define RAW_LENGTH			42
+#define NORMAL_REPEATS		6
 
 static int validate(void) {
 	if(voltcraft->rawlen == RAW_LENGTH) {
@@ -79,18 +80,20 @@ static void parseCode(void) {
 	createMessage(systemcode, unitcode, state);
 }
 
-static void createRawCode(int id, int unit, int state) {
+static void createRawCode(int id, int unit, int state, int dimbright) {
 	int binbuf[20];
 	int *praw;
 	int i;
 	
 	memset(binbuf, 0, sizeof(binbuf));
 	decToBinRev(id, &binbuf[0]);
-	decToBinRev(unit - 1, &binbuf[12]);
-	//rawbuf[14] = 0 //only for dimm/all-on
-	binbuf[15] = state;
-	//rawbuf[16] = 0; //only for bright/dimm
-	//rawbuf[17] = 0; //always zero
+	if (dimbright >= 0)
+		unit = 3;
+	decToBinRev(unit, &binbuf[12]);
+	binbuf[14] = (dimbright >= 0) ? 1 : 0; //only for dim/bright/all-on/all-off
+	binbuf[15] = ((state == 1) || (dimbright == 1)) ? 1 : 0; //1 for on or dim
+	binbuf[16] = (dimbright >= 0) ? 1 : 0; //only for dim/bright
+	//binbuf[17] = 0; //always zero
 	binbuf[18] = binbuf[12] ^ binbuf[14] ^ binbuf[16]; //checksum 1
 	binbuf[19] = binbuf[13] ^ binbuf[15] ^ binbuf[17]; //checksum 2
 	
@@ -104,14 +107,8 @@ static void createRawCode(int id, int unit, int state) {
 			*praw++ = AVG_PULSE_LENGTH;		
 			*praw++ = 2 * AVG_PULSE_LENGTH;
 		}
-		
-		printf("i %d: in %d -> %d-%d\n", i, binbuf[i], voltcraft->raw[i * 2], voltcraft->raw[i * 2 + 1]);
 	}
 	*praw++ = 119L * AVG_PULSE_LENGTH;
-	
-	
-	
-	printf("pulses: %d\n", praw - voltcraft->raw);
 	
 	voltcraft->rawlen = RAW_LENGTH;
 }
@@ -120,6 +117,7 @@ static int createCode(struct JsonNode *code) {
 	int id = -1;
 	int unit = -1;
 	int state = -1;
+	int dimbright = -1;
 	int i;
 	double itmp = -1;
 
@@ -128,29 +126,31 @@ static int createCode(struct JsonNode *code) {
 	if(json_find_number(code, "unit", &itmp) == 0)
 		unit = (int)round(itmp);
 	if(json_find_number(code, "off", &itmp) == 0)
-		state=1;
-	else if(json_find_number(code, "on", &itmp) == 0)
 		state=0;
+	else if(json_find_number(code, "on", &itmp) == 0)
+		state=1;
+	else if (json_find_number(code, "dim", &itmp) == 0)
+		dimbright = 1;
+	else if (json_find_number(code, "bright", &itmp) == 0)
+		dimbright = 0;
 
-	if(id == -1 || unit == -1 || state == -1) {
+	if(id == -1 || unit == -1 || (state == -1 && dimbright == -1) ) {
 		logprintf(LOG_ERR, "voltcraft: insufficient number of arguments");
 		return EXIT_FAILURE;
 	} else if(id > 4095 || id < 0) {
 		logprintf(LOG_ERR, "voltcraft: invalid id range");
 		return EXIT_FAILURE;
-	} else if(unit > 4 || unit < 1) {
+	} else if(unit > 3 || unit < 0) {
 		logprintf(LOG_ERR, "voltcraft: invalid unit range");
 		return EXIT_FAILURE;
 	} else {
 		createMessage(id, unit, state);
 		
-		createRawCode(id, unit, state);
+		createRawCode(id, unit, state, dimbright);
 		
 		for (i=0; i<voltcraft->rawlen; i++)
 			printf("%d ", voltcraft->raw[i]);
 	}
-	
-	printf("ID: %d\n", id);
 	
 	return EXIT_SUCCESS;
 }
@@ -158,6 +158,8 @@ static int createCode(struct JsonNode *code) {
 static void printHelp(void) {
 	printf("\t -t --on\t\t\tsend an on signal\n");
 	printf("\t -f --off\t\t\tsend an off signal\n");
+	printf("\t -b --bright\t\t\tsend an bright signal\n");
+	printf("\t -d --dim\t\t\tsend an dim signal\n");
 	printf("\t -u --unit=unit\t\t\tcontrol a device with this unit code\n");
 	printf("\t -i --id=id\t\t\tcontrol a device with this id\n");
 }
@@ -169,9 +171,10 @@ void voltcraftInit(void) {
 
 	protocol_register(&voltcraft);
 	protocol_set_id(voltcraft, "voltcraft");
-	protocol_device_add(voltcraft, "voltcraft", "Voltcraft RC30 Switches");
+	protocol_device_add(voltcraft, "voltcraft", "Voltcraft RC30(ADX) switches");
 	voltcraft->devtype = SWITCH;
 	voltcraft->hwtype = RF433;
+	voltcraft->txrpt = NORMAL_REPEATS;
 	voltcraft->minrawlen = RAW_LENGTH;
 	voltcraft->maxrawlen = RAW_LENGTH;
 	voltcraft->maxgaplen = MAX_PULSE_LENGTH*PULSE_DIV;
@@ -179,7 +182,9 @@ void voltcraftInit(void) {
 
 	options_add(&voltcraft->options, 't', "on", OPTION_NO_VALUE, DEVICES_STATE, JSON_STRING, NULL, NULL);
 	options_add(&voltcraft->options, 'f', "off", OPTION_NO_VALUE, DEVICES_STATE, JSON_STRING, NULL, NULL);
-	options_add(&voltcraft->options, 'u', "unit", OPTION_HAS_VALUE, DEVICES_ID, JSON_NUMBER, NULL, "^([1-4]{1})$");
+	options_add(&voltcraft->options, 'd', "dim", OPTION_NO_VALUE, DEVICES_STATE, JSON_STRING, NULL, NULL);
+	options_add(&voltcraft->options, 'b', "bright", OPTION_NO_VALUE, DEVICES_STATE, JSON_STRING, NULL, NULL);
+	options_add(&voltcraft->options, 'u', "unit", OPTION_HAS_VALUE, DEVICES_ID, JSON_NUMBER, NULL, "^([0-3]{1})$");
 	options_add(&voltcraft->options, 'i', "id", OPTION_HAS_VALUE, DEVICES_ID, JSON_NUMBER, NULL, "^([0-9]{1,3}|[0-3][0-9]{3}|40([0-8][0-9]|9[0-5]))$");
 
 	voltcraft->parseCode=&parseCode;
@@ -193,7 +198,7 @@ void compatibility(struct module_t *module) {
 	module->name = "voltcraft";
 	module->version = "1.0";
 	module->reqversion = "6.0";
-	module->reqcommit = "84";
+	module->reqcommit = NULL;
 }
 
 void init(void) {
