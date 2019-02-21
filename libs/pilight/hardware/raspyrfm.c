@@ -417,7 +417,7 @@ void raspyrfmInit(void) {
 	options_add(&raspyrfm->options, "c", "spi-channel", OPTION_HAS_VALUE, DEVICES_VALUE, JSON_NUMBER, NULL, "^[01]$");
 
 	int frequency = 0;
-	if(config_setting_get_number("frequency", 0, &frequency) != 0)
+	if(config_setting_get_number("frequency", 0, &frequency) == 0)
 		setFrequency(frequency);
 	else
 		setFrequency(0);
@@ -427,7 +427,6 @@ void raspyrfmInit(void) {
 	raspyrfm->mingaplen = 5100;
 	raspyrfm->maxgaplen = 10000;
 	raspyrfm->comtype=COMOOK;
-	raspyrfm->hwtype=NONE;
 	raspyrfm->init = &raspyrfmHwInit;
 	raspyrfm->settings=&raspyrfmSettings;
 }
